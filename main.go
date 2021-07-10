@@ -10,12 +10,17 @@ func main() {
 	var parallel int
 
 	flag.Usage = func() { usage() }
-	flag.IntVar(&parallel, "parallel", 10, "Number of requests to send in parallel")
+	flag.IntVar(&parallel, "parallel", defaultParallelRequests, "Number of requests to send in parallel")
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) == 0 {
 		usage()
+	}
+
+	dl := NewDownloader(args, WithParallelRequests(parallel))
+	for k, v := range dl.Download() {
+		fmt.Printf("%s %s\n", k, v)
 	}
 }
 
