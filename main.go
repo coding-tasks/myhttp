@@ -19,8 +19,12 @@ func main() {
 	}
 
 	dl := NewDownloader(args, WithParallelRequests(parallel))
-	for k, v := range dl.Download() {
-		fmt.Printf("%s %s\n", k, v)
+	for hash := range dl.Download() {
+		if hash.err != nil {
+			fmt.Printf("%s %s\n", hash.url, hash.err)
+		} else {
+			fmt.Printf("%s %s\n", hash.url, hash.sum)
+		}
 	}
 }
 

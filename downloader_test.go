@@ -1,14 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 )
 
-func TestDownloader_Download(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+type testServer struct {
+	server  *httptest.Server
+	baseURL string
+}
+
+func NewTestServer() *testServer {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL.Path
 		switch url {
 		case "/ankit.pl":
@@ -24,9 +30,20 @@ func TestDownloader_Download(t *testing.T) {
 			w.WriteHeader(500)
 		}
 	}))
-	defer server.Close()
 
-	baseURL := server.URL
+	return &testServer{
+		server:  s,
+		baseURL: s.URL,
+	}
+}
+
+func (t *testServer) URL(u string) string {
+	return fmt.Sprintf("%s/%s", t.baseURL, u)
+}
+
+func TestDownloader_Download(t *testing.T) {
+	ts := NewTestServer()
+	defer ts.server.Close()
 
 	cases := []struct {
 		scenario string
@@ -35,27 +52,48 @@ func TestDownloader_Download(t *testing.T) {
 	}{
 		{
 			scenario: "all valid urls",
-			hosts:    []string{baseURL + "/ankit.pl", baseURL + "/github.com", baseURL + "/google.com"},
+			hosts: []string{
+				ts.URL("ankit.pl"),
+				ts.URL("github.com"),
+				ts.URL("google.com"),
+			},
 			expected: map[string]string{
-				baseURL + "/ankit.pl":   "480735132954bbad8813ea6e5a4c9a73",
-				baseURL + "/github.com": "06bcae6c0f349f5d9c4505a4cbea0cae",
-				baseURL + "/google.com": "69ab4493fb4c2dfb0eea78711e6dd410",
+				ts.URL("ankit.pl"):   "480735132954bbad8813ea6e5a4c9a73",
+				ts.URL("github.com"): "06bcae6c0f349f5d9c4505a4cbea0cae",
+				ts.URL("google.com"): "69ab4493fb4c2dfb0eea78711e6dd410",
 			},
 		},
 		{
 			scenario: "with some urls with unexpected response code",
-			hosts:    []string{baseURL + "/ankit.pl", baseURL + "/invalid.com", baseURL + "/error.com"},
+			hosts: []string{
+				ts.URL("ankit.pl"),
+				ts.URL("invalid.com"),
+				ts.URL("error.com"),
+			},
 			expected: map[string]string{
-				baseURL + "/ankit.pl":    "480735132954bbad8813ea6e5a4c9a73",
-				baseURL + "/invalid.com": "unexpected response code",
-				baseURL + "/error.com":   "unexpected response code",
+				ts.URL("ankit.pl"):    "480735132954bbad8813ea6e5a4c9a73",
+				ts.URL("invalid.com"): "unexpected response code",
+				ts.URL("error.com"):   "unexpected response code",
 			},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.scenario, func(t *testing.T) {
-			actual := NewDownloader(tc.hosts, WithHTTPClient(server.Client())).Download()
+			out := NewDownloader(
+				tc.hosts,
+				WithParallelRequests(1),
+				WithHTTPClient(ts.server.Client()),
+			).Download()
+
+			actual := make(map[string]string)
+			for h := range out {
+				if h.err != nil {
+					actual[h.url] = h.err.Error()
+				} else {
+					actual[h.url] = h.sum
+				}
+			}
 
 			if !reflect.DeepEqual(tc.expected, actual) {
 				t.Errorf("expected %+v, got %+v", tc.expected, actual)

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,22 +71,47 @@ func WithHTTPClient(c *http.Client) DownloadOption {
 	}
 }
 
-// Download fetches the content from host, and assign checksum.
-func (dl *Downloader) Download() map[string]string {
-	hash := make(map[string]string)
+type result struct {
+	url string
+	sum string
+	err error
+}
 
-	for _, url := range dl.hosts {
-		url := sanitizeURL(url)
+// Download fetches the content from host, calculates and assign checksum.
+func (dl *Downloader) Download() chan result {
+	host := make(chan string, dl.parallel)
 
-		b, err := dl.fetch(url)
-		if err != nil {
-			hash[url] = err.Error()
-		} else {
-			hash[url] = checksum(b)
-		}
+	var wg sync.WaitGroup
+	wg.Add(dl.parallel)
+
+	out := make(chan result, dl.parallel)
+	for i := 0; i < dl.parallel; i++ {
+		go func() {
+			defer wg.Done()
+			dl.worker(host, out)
+		}()
 	}
 
-	return hash
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	go func() {
+		for _, url := range dl.hosts {
+			host <- sanitizeURL(url)
+		}
+		close(host)
+	}()
+
+	return out
+}
+
+func (dl *Downloader) worker(host <-chan string, r chan<- result) {
+	for url := range host {
+		b, err := dl.fetch(url)
+		r <- result{url, checksum(b), err}
+	}
 }
 
 func (dl *Downloader) fetch(url string) ([]byte, error) {
@@ -120,6 +146,7 @@ func checksum(b []byte) string {
 }
 
 func sanitizeURL(url string) string {
+	// We don't care about other schemes like ftp://, file:// etc.
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return "https://" + url
 	}
